@@ -136,7 +136,8 @@ img.chatImage {
 </div>
 
 <script>
-const BASE_URL = "https://script.google.com/macros/s/AKfycbyQ6nrz8SqmzQUq1Bu8ix_ZCH9cyt4NXUwe3txhFdTrJcQl5Cgl7xdNO2gWvERA4NZK/exec"; // <<--- put your new deployed web app URL here
+const BASE_URL = "https://script.google.com/macros/s/AKfycbywhKqysxY6aGRfNNqIHW3C3ZaEoq7F0mLqOBVdjwi2YZcJkL6bJ-iokAel0L1dLLMN/exec"; // replace with the URL from redeploy
+
 let currentUser = "";
 let currentChannel = "Main";
 let approved = false;
@@ -150,12 +151,11 @@ async function createAccount() {
 
   try {
     const res = await fetch(`${BASE_URL}?action=createAccount&username=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}`);
-    const json = await res.json();
-    if (json && json.success) loginMsg.textContent = "Account created!";
-    else loginMsg.textContent = json.error || "Failed to create account";
-  } catch (err) {
-    loginMsg.textContent = "Account request failed";
+    const text = await res.text();
+    loginMsg.textContent = text;
+  } catch(err) {
     console.error(err);
+    loginMsg.textContent = "Error connecting to server.";
   }
 }
 
@@ -166,19 +166,18 @@ async function login() {
 
   try {
     const res = await fetch(`${BASE_URL}?action=login&username=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}`);
-    const json = await res.json();
-    if (json && (json.success || json[0] === "Login success" || (typeof json === "string" && json.includes("Login success")))) {
+    const text = await res.text();
+
+    if(text === "Login success") {
       currentUser = user;
       approved = true;
       startChat();
     } else {
-      // some legacy responses may return text; handle gracefully
-      const text = await res.text().catch(()=>null);
-      loginMsg.textContent = (json && json.error) || text || "Login failed";
+      loginMsg.textContent = text;
     }
-  } catch (err) {
-    loginMsg.textContent = "Login request failed";
+  } catch(err) {
     console.error(err);
+    loginMsg.textContent = "Error connecting to server.";
   }
 }
 
@@ -198,95 +197,94 @@ function startMessagePolling() {
   if(messagePollTimeout) clearTimeout(messagePollTimeout);
   const poll = async () => {
     await loadMessages();
-    messagePollTimeout = setTimeout(poll, 3000); // poll every 3s
+    messagePollTimeout = setTimeout(poll, 3000);
   };
   poll();
 }
 
 function startUserPolling() {
-  setInterval(loadUsers, 5000); // still okay to refresh online users
+  setInterval(loadUsers, 5000);
 }
 
 // ===== LOAD USERS =====
 async function loadUsers() {
-  if (!approved) return;
+  if(!approved) return;
   try {
     const res = await fetch(`${BASE_URL}?action=getUsers`);
     const online = await res.json();
-    onlineUsers.textContent = "Online: "+(online.length?online.join(", "):"None");
-  } catch (err) {
-    console.error("Failed loading users", err);
+    onlineUsers.textContent = "Online: "+(online.length ? online.join(", ") : "None");
+  } catch(err) {
+    console.error(err);
   }
 }
 
-// ===== LOAD CHANNELS (DMs only) =====
+// ===== LOAD CHANNELS =====
 async function loadChannels() {
-  if (!approved) return;
+  if(!approved) return;
   try {
-    const users = await fetch(`${BASE_URL}?action=getUsers`).then(r=>r.json());
+    const usersRes = await fetch(`${BASE_URL}?action=getUsers`);
+    const users = await usersRes.json();
     const container = document.getElementById("dmListContainer");
     container.innerHTML = "";
-    users.forEach(u=>{
-      if(u!==currentUser){
+    users.forEach(u => {
+      if(u !== currentUser){
         const btn = document.createElement("div");
-        btn.className="channelBtn";
-        btn.textContent="#"+u;
-        btn.onclick=()=>openDM(u);
+        btn.className = "channelBtn";
+        btn.textContent = "#" + u;
+        btn.onclick = () => openDM(u);
         container.appendChild(btn);
       }
     });
-  } catch (err) {
-    console.error("Failed loading channels", err);
+  } catch(err) {
+    console.error(err);
   }
 }
 
 // ===== OPEN DM =====
 async function openDM(otherUser){
   const dmChannel = [currentUser, otherUser].sort().join("_DM_");
-  try {
-    await fetch(`${BASE_URL}?action=createDMChannel&user1=${encodeURIComponent(currentUser)}&user2=${encodeURIComponent(otherUser)}`);
-    currentChannel = dmChannel;
-    await loadMessages();
-    startMessagePolling(); // restart polling for new channel
-  } catch(err){
-    console.error("Failed to open DM", err);
-  }
+  await fetch(`${BASE_URL}?action=createDMChannel&user1=${encodeURIComponent(currentUser)}&user2=${encodeURIComponent(otherUser)}`);
+  currentChannel = dmChannel;
+  await loadMessages();
+  startMessagePolling();
 }
 
 // ===== LOAD MESSAGES =====
 async function loadMessages(){
   if(!approved) return;
   try {
-    const data = await fetch(`${BASE_URL}?action=getMessages&channel=${encodeURIComponent(currentChannel)}`).then(r=>r.json());
+    const res = await fetch(`${BASE_URL}?action=getMessages&channel=${encodeURIComponent(currentChannel)}`);
+    const data = await res.json();
     const atBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 50;
-
     messages.innerHTML = "";
-    data.forEach(d=>{
+
+    data.forEach(d => {
       const div = document.createElement("div");
-      div.className="message";
+      div.className = "message";
 
       const info = document.createElement("div");
-      info.textContent=`${d.time} ${d.sender}`;
+      info.textContent = `${d.time} ${d.sender}`;
       div.appendChild(info);
 
       if(d.message){
         const msg = document.createElement("div");
-        msg.className="bubble";
-        msg.textContent=d.message;
+        msg.className = "bubble";
+        msg.textContent = d.message;
         div.appendChild(msg);
       }
       if(d.imageUrl){
         const img = document.createElement("img");
-        img.className="chatImage";
-        img.src=d.imageUrl;
+        img.className = "chatImage";
+        img.src = d.imageUrl;
         div.appendChild(img);
       }
+
       messages.appendChild(div);
     });
 
     if(atBottom) messages.scrollTop = messages.scrollHeight;
-  } catch(err){
-    console.error("Failed to load messages", err);
+  } catch(err) {
+    console.error(err);
   }
 }
 
@@ -296,18 +294,19 @@ async function sendMessage(){
   if(!msg) return;
   try {
     await fetch(`${BASE_URL}?action=sendMessage&channel=${encodeURIComponent(currentChannel)}&sender=${encodeURIComponent(currentUser)}&message=${encodeURIComponent(msg)}`);
-    msgInput.value="";
+    msgInput.value = "";
     await loadMessages();
   } catch(err){
-    statusMsg.textContent = "Error sending message.";
     console.error(err);
+    statusMsg.textContent = "Error sending message.";
   }
 }
 
-// ===== UPLOAD IMAGE (CORB-safe) =====
-document.getElementById("imageInput").addEventListener("change", async e=>{
+// ===== UPLOAD IMAGE =====
+document.getElementById("imageInput").addEventListener("change", async e => {
   const file = e.target.files[0];
   if(!file) return;
+
   if(file.size > 5*1024*1024){
     statusMsg.textContent = "File too big!";
     return;
@@ -323,36 +322,23 @@ document.getElementById("imageInput").addEventListener("change", async e=>{
       formData.append("sender", currentUser);
       formData.append("file", base64);
 
-      // POST to backend; backend returns proper JSON + CORS headers
-      const res = await fetch(BASE_URL, { method:"POST", body: formData });
-
-      // parse JSON (CORB-safe because backend sets JSON MIME + CORS headers)
+      const res = await fetch(BASE_URL, { method: "POST", body: formData });
       const json = await res.json();
 
       if(json.success){
         statusMsg.textContent = "Image uploaded!";
-        // append immediately with returned URL (do NOT fetch the drive URL)
-        const div = document.createElement("div");
-        div.className = "message";
-        const info = document.createElement("div");
-        info.textContent = `${new Date().toLocaleString()} ${currentUser}`;
-        div.appendChild(info);
-        const img = document.createElement("img");
-        img.className = "chatImage";
-        img.src = json.url;
-        div.appendChild(img);
-        messages.appendChild(div);
-        messages.scrollTop = messages.scrollHeight;
+        await loadMessages();
       } else {
-        statusMsg.textContent = "Upload failed: "+json.error;
+        statusMsg.textContent = "Upload failed: " + json.error;
       }
     } catch(err){
-      statusMsg.textContent = "Upload error";
       console.error(err);
+      statusMsg.textContent = "Upload error";
     }
   };
   reader.readAsDataURL(file);
 });
 </script>
+
 </body>
 </html>
