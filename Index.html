@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Private Chat</title>
+<style>
+:root {
+  --bg: #031b36;
+  --card: #082a52;
+  --text: #cce6ff;
+  --bubble: #0a336b;
+  --bubble-2: #0e4a91;
+}
+body {
+  font-family: Arial;
+  background-color: var(--bg);
+  color: var(--text);
+  margin:0;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:flex-start;
+  height:100vh;
+  overflow:hidden;
+}
+#loginContainer, #chatContainer, #dmContainer {
+  background-color: var(--card);
+  border-radius:16px;
+  box-shadow:0 0 15px #0b68d8;
+  padding:20px;
+  width:80%;
+  max-width:600px;
+  margin-top:40px;
+}
+input, button, select {
+  padding:8px;
+  border-radius:8px;
+  border:none;
+  margin:5px;
+}
+button {
+  background-color:#007bff;
+  color:white;
+  cursor:pointer;
+}
+button:hover {
+  background-color:#00aaff;
+}
+#messages {
+  height:300px;
+  overflow-y:auto;
+  border:1px solid #0852a3;
+  padding:10px;
+  margin-bottom:10px;
+  background-color:#041a35;
+  border-radius:10px;
+}
+.message {
+  margin:5px 0;
+}
+.bubble {
+  background: linear-gradient(180deg,var(--bubble),var(--bubble-2));
+  padding:10px;
+  border-radius:10px;
+  max-width:45%;
+  box-shadow:0 6px 18px rgba(3,27,54,0.5);
+  color: var(--text);
+  border:1px solid rgba(11,104,216,0.06);
+  word-wrap:break-word;
+  margin-top:3px;
+}
+#onlineUsers {
+  position:absolute;
+  top:10px;
+  right:10px;
+  background: var(--bubble);
+  padding:10px;
+  border-radius:10px;
+  color:#aaccff;
+  font-size:14px;
+}
+#channels {
+  position:absolute;
+  top:60px;
+  right:10px;
+  background: var(--bubble);
+  padding:10px;
+  border-radius:10px;
+  color:#aaccff;
+  font-size:14px;
+  max-height:60vh;
+  overflow-y:auto;
+}
+.channelBtn {
+  display:block;
+  background-color: var(--bubble);
+  color: var(--text);
+  border-radius:8px;
+  margin:3px 0;
+  padding:5px;
+  cursor:pointer;
+}
+.channelBtn:hover {
+  background-color: var(--bubble-2);
+}
+img.chatImage {
+  max-width:150px;
+  border-radius:8px;
+  margin-top:5px;
+}
+</style>
+</head>
+<body>
+
+<div id="onlineUsers">Online: Loading...</div>
+<div id="channels">Channels:<div id="dmListContainer"></div></div>
+
+<div id="loginContainer">
+  <h2>Login or Create Account</h2>
+  <input id="username" placeholder="Username"><br>
+  <input id="password" type="password" placeholder="Password"><br>
+  <button onclick="createAccount()">Create Account</button>
+  <button onclick="login()">Login</button>
+  <p id="loginMsg"></p>
+</div>
+
+<div id="chatContainer" style="display:none;">
+  <h2 id="welcome"></h2>
+  <div id="messages"></div>
+  <input id="msgInput" placeholder="Type a message..." onkeydown="if(event.key==='Enter') sendMessage()">
+  <button onclick="sendMessage()">Send</button>
+  <button onclick="document.getElementById('imageInput').click()">📷</button>
+  <input type="file" id="imageInput" accept="image/*" style="display:none">
+  <p id="statusMsg"></p>
+</div>
+
+<script>
+const BASE_URL = "https://script.google.com/macros/s/AKfycbx_XzEJXWGFIFD2O14RI9aAhUkOzct9tAkZ3HzLA2EA53LieygcW64pTNhTEWBXLFLm/exec"; // <<--- put your new deployed web app URL here
+let currentUser = "";
+let currentChannel = "Main";
+let approved = false;
+let messagePollTimeout = null;
+
+// ===== ACCOUNT LOGIC =====
+async function createAccount() {
+  const user = username.value.trim();
+  const pass = password.value.trim();
+  if (!user || !pass) return loginMsg.textContent = "Enter username & password.";
+
+  try {
+    const res = await fetch(`${BASE_URL}?action=createAccount&username=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}`);
+    const json = await res.json();
+    if (json && json.success) loginMsg.textContent = "Account created!";
+    else loginMsg.textContent = json.error || "Failed to create account";
+  } catch (err) {
+    loginMsg.textContent = "Account request failed";
+    console.error(err);
+  }
+}
+
+async function login() {
+  const user = username.value.trim();
+  const pass = password.value.trim();
+  if (!user || !pass) return loginMsg.textContent = "Enter username & password.";
+
+  try {
+    const res = await fetch(`${BASE_URL}?action=login&username=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}`);
+    const json = await res.json();
+    if (json && (json.success || json[0] === "Login success" || (typeof json === "string" && json.includes("Login success")))) {
+      currentUser = user;
+      approved = true;
+      startChat();
+    } else {
+      // some legacy responses may return text; handle gracefully
+      const text = await res.text().catch(()=>null);
+      loginMsg.textContent = (json && json.error) || text || "Login failed";
+    }
+  } catch (err) {
+    loginMsg.textContent = "Login request failed";
+    console.error(err);
+  }
+}
+
+// ===== CHAT START =====
+function startChat() {
+  loginContainer.style.display = "none";
+  chatContainer.style.display = "block";
+  welcome.textContent = "Logged in as " + currentUser;
+  loadUsers();
+  loadChannels();
+  startMessagePolling();
+  startUserPolling();
+}
+
+// ===== POLLING HELPERS =====
+function startMessagePolling() {
+  if(messagePollTimeout) clearTimeout(messagePollTimeout);
+  const poll = async () => {
+    await loadMessages();
+    messagePollTimeout = setTimeout(poll, 3000); // poll every 3s
+  };
+  poll();
+}
+
+function startUserPolling() {
+  setInterval(loadUsers, 5000); // still okay to refresh online users
+}
+
+// ===== LOAD USERS =====
+async function loadUsers() {
+  if (!approved) return;
+  try {
+    const res = await fetch(`${BASE_URL}?action=getUsers`);
+    const online = await res.json();
+    onlineUsers.textContent = "Online: "+(online.length?online.join(", "):"None");
+  } catch (err) {
+    console.error("Failed loading users", err);
+  }
+}
+
+// ===== LOAD CHANNELS (DMs only) =====
+async function loadChannels() {
+  if (!approved) return;
+  try {
+    const users = await fetch(`${BASE_URL}?action=getUsers`).then(r=>r.json());
+    const container = document.getElementById("dmListContainer");
+    container.innerHTML = "";
+    users.forEach(u=>{
+      if(u!==currentUser){
+        const btn = document.createElement("div");
+        btn.className="channelBtn";
+        btn.textContent="#"+u;
+        btn.onclick=()=>openDM(u);
+        container.appendChild(btn);
+      }
+    });
+  } catch (err) {
+    console.error("Failed loading channels", err);
+  }
+}
+
+// ===== OPEN DM =====
+async function openDM(otherUser){
+  const dmChannel = [currentUser, otherUser].sort().join("_DM_");
+  try {
+    await fetch(`${BASE_URL}?action=createDMChannel&user1=${encodeURIComponent(currentUser)}&user2=${encodeURIComponent(otherUser)}`);
+    currentChannel = dmChannel;
+    await loadMessages();
+    startMessagePolling(); // restart polling for new channel
+  } catch(err){
+    console.error("Failed to open DM", err);
+  }
+}
+
+// ===== LOAD MESSAGES =====
+async function loadMessages(){
+  if(!approved) return;
+  try {
+    const data = await fetch(`${BASE_URL}?action=getMessages&channel=${encodeURIComponent(currentChannel)}`).then(r=>r.json());
+    const atBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 50;
+
+    messages.innerHTML = "";
+    data.forEach(d=>{
+      const div = document.createElement("div");
+      div.className="message";
+
+      const info = document.createElement("div");
+      info.textContent=`${d.time} ${d.sender}`;
+      div.appendChild(info);
+
+      if(d.message){
+        const msg = document.createElement("div");
+        msg.className="bubble";
+        msg.textContent=d.message;
+        div.appendChild(msg);
+      }
+      if(d.imageUrl){
+        const img = document.createElement("img");
+        img.className="chatImage";
+        img.src=d.imageUrl;
+        div.appendChild(img);
+      }
+      messages.appendChild(div);
+    });
+
+    if(atBottom) messages.scrollTop = messages.scrollHeight;
+  } catch(err){
+    console.error("Failed to load messages", err);
+  }
+}
+
+// ===== SEND MESSAGE =====
+async function sendMessage(){
+  const msg = msgInput.value.trim();
+  if(!msg) return;
+  try {
+    await fetch(`${BASE_URL}?action=sendMessage&channel=${encodeURIComponent(currentChannel)}&sender=${encodeURIComponent(currentUser)}&message=${encodeURIComponent(msg)}`);
+    msgInput.value="";
+    await loadMessages();
+  } catch(err){
+    statusMsg.textContent = "Error sending message.";
+    console.error(err);
+  }
+}
+
+// ===== UPLOAD IMAGE (CORB-safe) =====
+document.getElementById("imageInput").addEventListener("change", async e=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  if(file.size > 5*1024*1024){
+    statusMsg.textContent = "File too big!";
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = async function(){
+    const base64 = reader.result.split(",")[1];
+    try {
+      const formData = new FormData();
+      formData.append("action", "uploadImage");
+      formData.append("channel", currentChannel);
+      formData.append("sender", currentUser);
+      formData.append("file", base64);
+
+      // POST to backend; backend returns proper JSON + CORS headers
+      const res = await fetch(BASE_URL, { method:"POST", body: formData });
+
+      // parse JSON (CORB-safe because backend sets JSON MIME + CORS headers)
+      const json = await res.json();
+
+      if(json.success){
+        statusMsg.textContent = "Image uploaded!";
+        // append immediately with returned URL (do NOT fetch the drive URL)
+        const div = document.createElement("div");
+        div.className = "message";
+        const info = document.createElement("div");
+        info.textContent = `${new Date().toLocaleString()} ${currentUser}`;
+        div.appendChild(info);
+        const img = document.createElement("img");
+        img.className = "chatImage";
+        img.src = json.url;
+        div.appendChild(img);
+        messages.appendChild(div);
+        messages.scrollTop = messages.scrollHeight;
+      } else {
+        statusMsg.textContent = "Upload failed: "+json.error;
+      }
+    } catch(err){
+      statusMsg.textContent = "Upload error";
+      console.error(err);
+    }
+  };
+  reader.readAsDataURL(file);
+});
+</script>
+</body>
+</html>
